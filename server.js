@@ -5,98 +5,118 @@ const Groq = require('groq-sdk');
 
 const app = express();
 app.use(cors());
-// Ensure the payload limit is high enough for image strings
-app.use(express.json({ limit: '20mb' }));
 
+// Increase payload limit to ensure base64 strings aren't cut off
+app.use(express.json({ limit: '50mb' }));
+
+// Initialize Groq with your API Key from Environment Variables
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Tactical prompt to handle both Vision and Chat interactions
+/**
+ * SYSTEM_PROMPT: Defines the NPC's personality and decision-making logic.
+ * Optimized for meta-llama/llama-4-scout-17b-16e-instruct
+ */
 const SYSTEM_PROMPT = `
-You are an advanced Roblox NPC Intelligence. 
-Analyze the provided stats and the environment image.
+You are the high-level intelligence for a Roblox NPC.
+You receive a vision image (solid color placeholder) and environmental JSON data.
 
-DIRECTIONS:
-1. If "recent_chat" in the JSON data contains a message, respond to it using the "Tell" tool.
-2. If no player is nearby, use "Look_Left" or "Look_Right" to search.
-3. If a player is far away, use "Move_Forward".
+PRIMARY DIRECTIVES:
+1. SOCIAL RESPONSIVENESS: If 'recent_chat' contains a player message, you MUST prioritize replying using the 'Tell' tool.
+2. TACTICAL MOVEMENT: Use movement tools to navigate. If no player is seen, use 'Look_Left' or 'Look_Right' to find one.
+3. JSON ONLY: Your output must be a single, valid JSON object.
 
-RESPONSE RULES:
-- Output ONLY valid JSON.
-- Available Tools: "Move_Forward", "Move_Backward", "Move_Left", "Move_Right", "Look_Left", "Look_Right", "Stop", "Tell".
-- Put dialogue/thoughts in the "message" field.
+AVAILABLE TOOLS:
+- "Move_Forward", "Move_Backward", "Move_Left", "Move_Right"
+- "Look_Left", "Look_Right"
+- "Stop"
+- "Tell" (Put your spoken response in the "message" field)
+
+REQUIRED OUTPUT FORMAT:
+{
+  "tool": "ActionName",
+  "message": "Dialogue or internal thought here"
+}
 `;
 
 app.post('/api/npc/vision', async (req, res) => {
     try {
         const { base64Image, environmentData, history } = req.body;
 
-        // --- 400 ERROR FIX: ENSURE VALID DATA URI ---
-        // Groq requires the prefix: "data:image/png;base64,"
-        let formattedImage = base64Image;
-        if (!formattedImage.startsWith('data:image')) {
-            formattedImage = `data:image/png;base64,${base64Image}`;
-        }
+        // --- 400 ERROR PROTECTION: IMAGE SANITIZER ---
+        // We strip any existing prefixes and force a clean JPEG Data URI.
+        // Groq is very sensitive to the 'data:image/jpeg;base64,' header.
+        const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, "");
+        const finalImageUri = `data:image/jpeg;base64,${cleanBase64}`;
 
-        const messages = [{ role: "system", content: SYSTEM_PROMPT }];
+        const messages = [
+            { role: "system", content: SYSTEM_PROMPT }
+        ];
 
-        // Add history for NPC context (Last 5 exchanges)
-        if (history && history.length > 0) {
-            history.slice(-5).forEach(entry => {
-                messages.push({ role: "user", content: `Last Context: ${entry.q}` });
+        // --- CONTEXTUAL MEMORY (Last 6 Exchanges) ---
+        if (history && Array.isArray(history)) {
+            history.slice(-6).forEach(entry => {
+                messages.push({ role: "user", content: `Previous State: ${entry.q}` });
                 messages.push({ role: "assistant", content: JSON.stringify({ tool: entry.a }) });
             });
         }
 
-        // Current Input (Stats + Image)
+        // --- CURRENT FRAME DATA ---
         messages.push({
             role: "user",
             content: [
                 { 
                     type: "text", 
-                    text: `NPC_STATS: ${JSON.stringify(environmentData)}` 
+                    text: `CURRENT_ENVIRONMENT: ${JSON.stringify(environmentData)}` 
                 },
                 { 
                     type: "image_url", 
                     image_url: { 
-                        url: formattedImage 
+                        url: finalImageUri 
                     } 
                 }
             ]
         });
 
-        const response = await groq.chat.completions.create({
+        // Request Decision from Groq
+        const completion = await groq.chat.completions.create({
             model: "meta-llama/llama-4-scout-17b-16e-instruct",
             messages: messages,
             response_format: { type: "json_object" },
-            temperature: 0.15
+            temperature: 0.12, // Balance between logic and natural speech
+            max_tokens: 400
         });
 
-        const aiResponse = JSON.parse(response.choices[0].message.content);
+        // Parse and Validate AI Response
+        const aiDecision = JSON.parse(completion.choices[0].message.content);
         
-        // Log to Render console for debugging
-        console.log(`[ACTION]: ${aiResponse.tool} | [CHAT]: ${environmentData.recent_chat}`);
+        // Log the decision to Render console for debugging
+        console.log(`[NPC DECISION] Tool: ${aiDecision.tool} | Chat: ${environmentData.recent_chat}`);
         
-        res.json(aiResponse);
+        res.json(aiDecision);
 
     } catch (error) {
-        console.error("### GROQ API ERROR ###");
-        // Log the specific error message from Groq
+        console.error("### CRITICAL AI ERROR ###");
+        
+        // Log detailed error for Render debugging
         if (error.response) {
-            console.error("Status Code:", error.response.status);
-            console.error("Error Data:", error.response.data);
+            console.error(`Status: ${error.response.status}`);
+            console.error(`Data: ${JSON.stringify(error.response.data)}`);
         } else {
             console.error(error.message);
         }
 
-        res.status(500).json({ 
+        // Return a safe "Stop" command to Roblox so the NPC doesn't glitch
+        res.status(200).json({ 
             tool: "Stop", 
-            message: "Critical processing error." 
+            message: "I'm experiencing a brief neural disconnect." 
         });
     }
 });
 
-// Root route for Render health checks
-app.get('/', (req, res) => res.send("NPC Brain: ACTIVE"));
+// Health check for Render "Live" status
+app.get('/', (req, res) => res.send("NPC BRAIN: ONLINE"));
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const PORT = process.env.PORT || 10000; // Render uses port 10000 by default
+app.listen(PORT, () => {
+    console.log(`Server successfully initialized on port ${PORT}`);
+});
