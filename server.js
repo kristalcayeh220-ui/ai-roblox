@@ -5,101 +5,98 @@ const Groq = require('groq-sdk');
 
 const app = express();
 app.use(cors());
-// Increased limit for high-res base64 strings if you eventually use real screenshots
-app.use(express.json({ limit: '25mb' }));
+// Ensure the payload limit is high enough for image strings
+app.use(express.json({ limit: '20mb' }));
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Highly optimized prompt for Llama-3/4 Vision models
+// Tactical prompt to handle both Vision and Chat interactions
 const SYSTEM_PROMPT = `
-You are the "Ai" for a Roblox world. 
-Your personality: Helpful, alert, and reactive.
+You are an advanced Roblox NPC Intelligence. 
+Analyze the provided stats and the environment image.
 
-CORE DIRECTIVES:
-1. SOCIAL PRIORITY: If "recent_chat" contains a message from a player, you MUST use the "Tell" tool to respond naturally.
-2. ENVIRONMENTAL AWARENESS: Use the "environmentData" JSON to understand your surroundings (Health, Position, Walls).
-3. MOVEMENT: If no player is nearby, use "Look_Left" or "Look_Right" to scan the area. 
+DIRECTIONS:
+1. If "recent_chat" in the JSON data contains a message, respond to it using the "Tell" tool.
+2. If no player is nearby, use "Look_Left" or "Look_Right" to search.
+3. If a player is far away, use "Move_Forward".
 
-OUTPUT RULES:
-- You must respond ONLY with a JSON object.
-- Valid tools: "Move_Forward", "Move_Backward", "Move_Left", "Move_Right", "Look_Left", "Look_Right", "Stop", "Tell".
-- Put your speech or thoughts in the "message" field.
-
-EXAMPLE RESPONSE:
-{
-  "tool": "Tell",
-  "message": "Hello! I saw you walking over there."
-}
+RESPONSE RULES:
+- Output ONLY valid JSON.
+- Available Tools: "Move_Forward", "Move_Backward", "Move_Left", "Move_Right", "Look_Left", "Look_Right", "Stop", "Tell".
+- Put dialogue/thoughts in the "message" field.
 `;
 
 app.post('/api/npc/vision', async (req, res) => {
     try {
         const { base64Image, environmentData, history } = req.body;
 
-        // 1. Validate Input
-        if (!base64Image) throw new Error("Missing image data");
+        // --- 400 ERROR FIX: ENSURE VALID DATA URI ---
+        // Groq requires the prefix: "data:image/png;base64,"
+        let formattedImage = base64Image;
+        if (!formattedImage.startsWith('data:image')) {
+            formattedImage = `data:image/png;base64,${base64Image}`;
+        }
 
         const messages = [{ role: "system", content: SYSTEM_PROMPT }];
 
-        // 2. Sliding Window Memory (Keeps the AI from getting confused by old data)
-        if (history && Array.isArray(history)) {
-            const recentHistory = history.slice(-6); // Only look at last 6 exchanges
-            recentHistory.forEach(entry => {
-                messages.push({ role: "user", content: `Past Context: ${entry.q}` });
+        // Add history for NPC context (Last 5 exchanges)
+        if (history && history.length > 0) {
+            history.slice(-5).forEach(entry => {
+                messages.push({ role: "user", content: `Last Context: ${entry.q}` });
                 messages.push({ role: "assistant", content: JSON.stringify({ tool: entry.a }) });
             });
         }
 
-        // 3. Current Frame Analysis
-        // We wrap the base64 to ensure the header is always correct
-        const formattedImage = base64Image.startsWith('data:') 
-            ? base64Image 
-            : `data:image/png;base64,${base64Image}`;
-
+        // Current Input (Stats + Image)
         messages.push({
             role: "user",
             content: [
                 { 
                     type: "text", 
-                    text: `ENVIRONMENT_SNAPSHOT: ${JSON.stringify(environmentData)}` 
+                    text: `NPC_STATS: ${JSON.stringify(environmentData)}` 
                 },
                 { 
                     type: "image_url", 
-                    image_url: { url: formattedImage } 
+                    image_url: { 
+                        url: formattedImage 
+                    } 
                 }
             ]
         });
 
-        // 4. Groq API Call
         const response = await groq.chat.completions.create({
             model: "meta-llama/llama-4-scout-17b-16e-instruct",
             messages: messages,
             response_format: { type: "json_object" },
-            temperature: 0.15, // Low enough for logic, high enough for natural speech
-            max_tokens: 300
+            temperature: 0.15
         });
 
-        const content = JSON.parse(response.choices[0].message.content);
+        const aiResponse = JSON.parse(response.choices[0].message.content);
         
-        // Debug logging for Render console
-        console.log(`[NPC] Tool: ${content.tool} | Msg: ${content.message || "..."}`);
+        // Log to Render console for debugging
+        console.log(`[ACTION]: ${aiResponse.tool} | [CHAT]: ${environmentData.recent_chat}`);
         
-        res.json(content);
+        res.json(aiResponse);
 
     } catch (error) {
-        console.error("### SERVER ERROR ###");
-        console.error(error.message);
-        
-        // Fallback to prevent the NPC from breaking in-game
+        console.error("### GROQ API ERROR ###");
+        // Log the specific error message from Groq
+        if (error.response) {
+            console.error("Status Code:", error.response.status);
+            console.error("Error Data:", error.response.data);
+        } else {
+            console.error(error.message);
+        }
+
         res.status(500).json({ 
             tool: "Stop", 
-            message: "My brain is fuzzy... (Server Error)" 
+            message: "Critical processing error." 
         });
     }
 });
 
-// Basic Health Check
-app.get('/', (req, res) => res.send("NPC Engine: Running"));
+// Root route for Render health checks
+app.get('/', (req, res) => res.send("NPC Brain: ACTIVE"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
