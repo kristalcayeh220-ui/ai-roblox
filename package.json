@@ -1,5 +1,5 @@
 {
-  "name": "roblox-vision-npc",
+  "name": "roblox-npc-vision",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
