@@ -1,15 +1,15 @@
 require('dotenv').config();
-const express = require('express');[cite: 2]
-const cors = require('cors');[cite: 2]
-const Groq = require('groq-sdk');[cite: 2]
+const express = require('express');
+const cors = require('cors');
+const Groq = require('groq-sdk');
 
 const app = express();
-app.use(cors());[cite: 2]
+app.use(cors());
 // Essential for receiving 256x256 base64 images from Roblox
-app.use(express.json({ limit: '20mb' }));[cite: 2]
+app.use(express.json({ limit: '20mb' }));
 
 const groq = new Groq({
-    apiKey: process.env.GROQ_API_KEY[cite: 2]
+    apiKey: process.env.GROQ_API_KEY
 });
 
 // Your specific prompt requirements
@@ -74,7 +74,7 @@ app.post('/api/npc/vision', async (req, res) => {
             model: "meta-llama/llama-4-scout-17b-16e-instruct",
             messages: messages,
             response_format: { type: "json_object" },
-            temperature: 0.2, // Low temperature for tactical consistency
+            temperature: 0.2, 
             max_tokens: 512
         });
 
