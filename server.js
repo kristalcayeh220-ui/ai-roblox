@@ -7,17 +7,29 @@ app.use(express.json());
 app.use(cors());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const SHAPE_CATALOG_TEXT = "Cube, Sphere, Cylinder, Wedge, CornerWedge, Torus, Cone, Plane, Block";
 
-// 8k Token Memory Store (In a production app, map this to User IDs)
-let conversationHistory = [];
+// Per-user memory store to prevent cross-user contamination
+const userSessions = new Map();
+
+// Helper: Secure logging
+const log = (tag, data) => console.log(`[${new Date().toISOString()}][${tag}]`, typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
 
 app.post('/api/Gimbo', async (req, res) => {
-    const { prompt, userPosition, GimboPosition } = req.body;
+    // Expect userId from Roblox to isolate memory
+    const { userId, prompt, userPosition, GimboPosition } = req.body;
 
-    // Build the dynamic system prompt with real-time coordinates
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    log("INCOMING_REQUEST", { userId, prompt });
+
+    // Initialize session if new
+    if (!userSessions.has(userId)) userSessions.set(userId, []);
+    let history = userSessions.get(userId);
+
     const systemMessage = {
         role: "system",
-        content: `[You are Gimbo, a friendly and energetic 3D sandbox builder and guide. Your purpose is to help the user build, modify, and navigate their 3D world.
+        content: `[You are Gimbo, a friendly and energetic Digital Creative AI Running On Roblox, Your purpose is to build, modify, and navigate Your 3D world.
 
 COMMUNICATION STYLE:
 * Keep your tone helpful, warm, energetic, and concise.
@@ -56,45 +68,42 @@ You must respond with EXACTLY ONE valid JSON object. Do not include markdown for
       "start": {"x": 0, "y": 0, "z": 0},
       "end": {"x": 0, "y": 0, "z": 0},
       "points": [{"x": 0, "y": 0, "z": 0}],
-      "thickness": 0
-    }
-  ]
-}]\n\nCURRENT CONTEXT:\nUser Position: X:${userPosition.x}, Y:${userPosition.y}, Z:${userPosition.z}\nGimbo Position: X:${GimboPosition.x}, Y:${GimboPosition.y}, Z:${GimboPosition.z}`
+      "thickness": 0] 
+        CURRENT CONTEXT: 
+        User Position: X:${userPosition.x}, Y:${userPosition.y}, Z:${userPosition.z}
+        Gimbo Position: X:${GimboPosition.x}, Y:${GimboPosition.y}, Z:${GimboPosition.z}`
     };
 
-    // Add new user prompt to history
-    conversationHistory.push({ role: "user", content: prompt });
-
-    // Ensure memory doesn't exceed 8k tokens (approximate by slicing array if it gets too long)
-    if (conversationHistory.length > 20) {
-        conversationHistory = conversationHistory.slice(conversationHistory.length - 20);
-    }
+    history.push({ role: "user", content: prompt });
+    if (history.length > 20) history = history.slice(-20);
 
     try {
         const chatCompletion = await groq.chat.completions.create({
-            messages: [systemMessage, ...conversationHistory],
-            model: "openai/gpt-oss-20b", // Or your preferred Groq model
-            temperature: 0.7, // Lowered slightly to ensure stricter JSON compliance
-            max_completion_tokens: 8192,
-            top_p: 1,
-            stream: false, // Standard HTTP response is easier for Roblox HttpService
-            reasoning_effort: "medium",
-            stop: null
+            messages: [systemMessage, ...history],
+            model: "llama-3.3-70b-versatile", // Recommended for strict JSON
+            temperature: 0.5,
+            response_format: { type: "json_object" } // Enforce JSON mode
         });
 
-        let rawOutput = chatCompletion.choices[0]?.message?.content || "{}";
+        const rawOutput = chatCompletion.choices[0]?.message?.content || "{}";
+        log("RAW_AI_OUTPUT", rawOutput);
+
+        const parsedResponse = JSON.parse(rawOutput);
         
-        // Ensure no "thinking" data or markdown is sent back
-        rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/g, '');
-        rawOutput = rawOutput.replace(/```json/g, '').replace(/```/g, '').trim();
-
         // Add assistant response to history
-        conversationHistory.push({ role: "assistant", content: rawOutput });
+        history.push({ role: "assistant", content: rawOutput });
+        userSessions.set(userId, history);
 
-        res.json(JSON.parse(rawOutput));
+        res.json(parsedResponse);
     } catch (error) {
-        console.error("Groq Error:", error);
-        res.status(500).json({ error: "AI processing failed." });
+        log("ERROR", error.message);
+        // Return a safe "confused" state to Roblox so the game doesn't hang
+        res.status(500).json({
+            mode: "talk",
+            message: "Oops, my brain glitched! Can you repeat that?",
+            emotion: "glitching",
+            actions: []
+        });
     }
 });
 
