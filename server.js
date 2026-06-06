@@ -1,6 +1,7 @@
 import express from 'express';
 import { Groq } from 'groq-sdk';
 import cors from 'cors';
+const SHAPE_CATALOG_TEXT = "Cube, Sphere, Cylinder, Wedge, CornerWedge, Torus, Cone, Plane, Block";
 
 const app = express();
 app.use(express.json());
