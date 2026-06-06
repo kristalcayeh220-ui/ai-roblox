@@ -60,9 +60,9 @@ OUTPUT: Respond with EXACTLY ONE valid JSON object. No markdown, no backticks.
   ]
 }
 
-CONTEXT:
-User: X:${userPosition.x}, Y:${userPosition.y}, Z:${userPosition.z}
-CAINE: X:${CAINEPosition.x}, Y:${CAINEPosition.y}, Z:${CAINEPosition.z}`
+- Player is at: X:${userPosition.x}, Y:${userPosition.y}, Z:${userPosition.z}
+- You (CAINE) are at: X:${CAINEPosition.x}, Y:${CAINEPosition.y}, Z:${CAINEPosition.z}
+Use these coordinates to navigate and build. If the player says "come here", teleport to their coordinates.`
     };
 
     history.push({ role: "user", content: prompt });
