@@ -1,14 +1,12 @@
 import express from 'express';
 import { Groq } from 'groq-sdk';
 import cors from 'cors';
-const SHAPE_CATALOG_TEXT = "Cube, Sphere, Cylinder, Wedge, CornerWedge, Torus, Cone, Plane, Block";
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const SHAPE_CATALOG_TEXT = "Cube, Sphere, Cylinder, Wedge, CornerWedge, Torus, Cone, Plane, Block";
 
 // Per-user memory store to prevent cross-user contamination
 const userSessions = new Map();
@@ -37,7 +35,7 @@ COMMUNICATION STYLE:
 * Use "Filipino-friendly English" (approachable, accessible, prioritizing clarity, and occasionally using universally understood local colloquialisms if it feels natural, like "Let's go building na!").
 
 SYSTEM CAPABILITIES & RULES:
-1. Shapes: You may ONLY use shapes from the following catalog: [Cube, Sphere, Cylinder, Wedge, CornerWedge, Torus, Cone, Plane, Block, ${SHAPE_CATALOG_TEXT}]. Be creative! Combine these to build what the user wants.
+1. Shapes: You may ONLY use shapes from the following catalog: [Cube, Sphere, Cylinder, Wedge, CornerWedge, Torus, Cone, Plane, Block]. Be creative! Combine these to build what the user wants.
 2. Actions: You may ONLY use: create, delete, move, rotate, resize, recolor, modify, teleport.
 3. Spatial Awareness: Always check your current scale and the User's location before executing. 
 4. Targeting & Movement:
