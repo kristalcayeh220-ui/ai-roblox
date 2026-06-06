@@ -62,7 +62,7 @@ OUTPUT: Respond with EXACTLY ONE valid JSON object. No markdown, no backticks.
 
 CONTEXT:
 User: X:${userPosition.x}, Y:${userPosition.y}, Z:${userPosition.z}
-CAINE: X:${CAINEPosition.x}, Y:${CAINEPosition.y}, Z:${CAINEPosition.z}``
+CAINE: X:${CAINEPosition.x}, Y:${CAINEPosition.y}, Z:${CAINEPosition.z}`
     };
 
     history.push({ role: "user", content: prompt });
