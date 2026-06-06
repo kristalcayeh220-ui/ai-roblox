@@ -86,8 +86,7 @@ You must respond with EXACTLY ONE valid JSON object. Do not include markdown for
         
         // Ensure no "thinking" data or markdown is sent back
         rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/g, '');
-        rawOutput = rawOutput.replace(/
-```json/g, '').replace(/```/g, '').trim();
+        rawOutput = rawOutput.replace(/```json/g, '').replace(/```/g, '').trim();
 
         // Add assistant response to history
         conversationHistory.push({ role: "assistant", content: rawOutput });
