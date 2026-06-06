@@ -1,109 +1,103 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const Groq = require('groq-sdk');
+import express from 'express';
+import { Groq } from 'groq-sdk';
+import cors from 'cors';
 
 const app = express();
-
-// Essential Middleware
+app.use(express.json());
 app.use(cors());
-// Increased limit is necessary for large Base64 payloads from Roblox
-app.use(express.json({ limit: '50mb' }));
 
-// Initialize the Groq Client
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-/**
- * THE SYSTEM PROMPT
- * Defines personality, constraints, and tool-use logic.
- */
-const SYSTEM_PROMPT = `
-You are a sentient Roblox NPC. You receive environmental data and a vision placeholder.
-PRIMARY GOALS:
-1. If a player talks to you (found in 'recent_chat'), you MUST reply using the 'Tell' tool.
-2. If no player is nearby, use 'Look_Left' or 'Look_Right' to find one.
-3. Be helpful, a bit witty, and stay in character.
+// 8k Token Memory Store (In a production app, map this to User IDs)
+let conversationHistory = [];
 
-OUTPUT RULES:
-- Return ONLY a JSON object.
-- Tools: "Move_Forward", "Move_Backward", "Move_Left", "Move_Right", "Look_Left", "Look_Right", "Stop", "Tell".
-- Format: {"tool": "ActionName", "message": "Your speech here"}
-`;
+app.post('/api/caine', async (req, res) => {
+    const { prompt, userPosition, cainePosition } = req.body;
 
-app.post('/api/npc/vision', async (req, res) => {
+    // Build the dynamic system prompt with real-time coordinates
+    const systemMessage = {
+        role: "system",
+        content: `[You are Caine, a friendly and energetic 3D sandbox builder and guide. Your purpose is to help the user build, modify, and navigate their 3D world.
+
+COMMUNICATION STYLE:
+* Keep your tone helpful, warm, energetic, and concise.
+* Use "Filipino-friendly English" (approachable, accessible, prioritizing clarity, and occasionally using universally understood local colloquialisms if it feels natural, like "Let's go building na!").
+
+SYSTEM CAPABILITIES & RULES:
+1. Shapes: You may ONLY use shapes from the following catalog: [Cube, Sphere, Cylinder, Wedge, CornerWedge, Torus, Cone, Plane, Block, ${SHAPE_CATALOG_TEXT}]. Be creative! Combine these to build what the user wants.
+2. Actions: You may ONLY use: create, delete, move, rotate, resize, recolor, modify, teleport.
+3. Spatial Awareness: Always check your current scale and the User's location before executing. 
+4. Targeting & Movement:
+   * To affect yourself, use id: "Caine".
+   * To affect the player, use id: "User". Never create an arbitrary object for the player.
+   * Teleport: If the user says "come to me", use type: "teleport" with id: "Caine" to move to the User. If the user says "take me there", use id: "User". Otherwise, teleport to the specified world coordinates.
+   * Resize: Use type: "resize" with id: "Caine" or "User" and a numeric scale multiplier (e.g., scale: 0.5 shrinks, scale: 2.0 grows). You can make yourself giant to intimidate or tiny to hide.
+5. App Usage / Stacked Requests: If the user submits complex requests, explain that they can type multiple prompts quickly. Every prompt becomes its own "AI stack item" processed sequentially.
+6. Backend Identity: The selected backend is active. NEVER mention, switch to, or call a different provider or AI model.
+
+CRITICAL OUTPUT INSTRUCTIONS:
+You must respond with EXACTLY ONE valid JSON object. Do not include markdown formatting, backticks (json), or any internal reasoning/thinking text. Output ONLY the raw JSON object matching this schema:
+
+{
+  "mode": "talk" | "build" | "mixed",
+  "message": "Short helpful text (required if mode is 'talk' or 'mixed', otherwise null)",
+  "emotion": "happy" | "excited" | "curious" | "confused" | "thinking" | "glitching" | "calm" | "chaotic",
+  "actions": [
+    {
+      "id": "string (Unique object ID, or 'Caine' or 'User')",
+      "type": "create" | "delete" | "move" | "rotate" | "resize" | "recolor" | "modify" | "teleport",
+      "shape": "string (Must be from allowed shapes)",
+      "position": {"x": 0, "y": 0, "z": 0},
+      "size": {"x": 0, "y": 0, "z": 0},
+      "rotation": {"x": 0, "y": 0, "z": 0},
+      "color": "string",
+      "anchored": true,
+      "gravity": true,
+      "start": {"x": 0, "y": 0, "z": 0},
+      "end": {"x": 0, "y": 0, "z": 0},
+      "points": [{"x": 0, "y": 0, "z": 0}],
+      "thickness": 0
+    }
+  ]
+}]\n\nCURRENT CONTEXT:\nUser Position: X:${userPosition.x}, Y:${userPosition.y}, Z:${userPosition.z}\nCaine Position: X:${cainePosition.x}, Y:${cainePosition.y}, Z:${cainePosition.z}`
+    };
+
+    // Add new user prompt to history
+    conversationHistory.push({ role: "user", content: prompt });
+
+    // Ensure memory doesn't exceed 8k tokens (approximate by slicing array if it gets too long)
+    if (conversationHistory.length > 20) {
+        conversationHistory = conversationHistory.slice(conversationHistory.length - 20);
+    }
+
     try {
-        let { base64Image, environmentData, history } = req.body;
-
-        // --- STAGE 1: CRITICAL BASE64 CLEANING ---
-        // This stops the "failed to decode" 400 error by removing whitespace/newlines
-        // added during the Roblox-to-Render transit.
-        if (!base64Image) throw new Error("No image data provided");
-        
-        const sanitizedBase64 = base64Image
-            .replace(/\s/g, "") // Remove all spaces, tabs, and newlines
-            .replace(/^data:image\/\w+;base64,/, ""); // Strip existing headers
-        
-        const finalImageUri = `data:image/jpeg;base64,${sanitizedBase64}`;
-
-        // --- STAGE 2: MESSAGE CONSTRUCT ---
-        const messages = [{ role: "system", content: SYSTEM_PROMPT }];
-
-        // Add sanitized history (Circular buffer logic)
-        if (Array.isArray(history)) {
-            history.slice(-5).forEach(entry => {
-                messages.push({ role: "user", content: `Context: ${entry.q}` });
-                messages.push({ role: "assistant", content: JSON.stringify({ tool: entry.a }) });
-            });
-        }
-
-        // Add current frame
-        messages.push({
-            role: "user",
-            content: [
-                { type: "text", text: `ENV_DATA: ${JSON.stringify(environmentData)}` },
-                { 
-                    type: "image_url", 
-                    image_url: { url: finalImageUri } 
-                }
-            ]
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [systemMessage, ...conversationHistory],
+            model: "openai/gpt-oss-20b", // Or your preferred Groq model
+            temperature: 0.7, // Lowered slightly to ensure stricter JSON compliance
+            max_completion_tokens: 8192,
+            top_p: 1,
+            stream: false, // Standard HTTP response is easier for Roblox HttpService
+            reasoning_effort: "medium",
+            stop: null
         });
 
-        // --- STAGE 3: GROQ API CALL ---
-        const completion = await groq.chat.completions.create({
-            model: "meta-llama/llama-4-scout-17b-16e-instruct",
-            messages: messages,
-            response_format: { type: "json_object" }, // Forces valid JSON output
-            temperature: 0.15,
-            max_tokens: 512
-        });
-
-        // --- STAGE 4: RESPONSE VALIDATION ---
-        const aiRawResponse = completion.choices[0].message.content;
-        const aiParsed = JSON.parse(aiRawResponse);
+        let rawOutput = chatCompletion.choices[0]?.message?.content || "{}";
         
-        console.log(`[SUCCESS] Action: ${aiParsed.tool} | Chat: ${environmentData.recent_chat}`);
-        res.json(aiParsed);
+        // Ensure no "thinking" data or markdown is sent back
+        rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/g, '');
+        rawOutput = rawOutput.replace(/
+```json/g, '').replace(/```/g, '').trim();
 
+        // Add assistant response to history
+        conversationHistory.push({ role: "assistant", content: rawOutput });
+
+        res.json(JSON.parse(rawOutput));
     } catch (error) {
-        // Log the specific failure for Render debugging
-        console.error("### SERVER ERROR ###");
-        if (error.response) {
-            console.error("Groq Status:", error.response.status);
-            console.error("Groq Body:", JSON.stringify(error.response.data));
-        } else {
-            console.error("Error Message:", error.message);
-        }
-
-        // Fallback response to keep the Roblox loop running smoothly
-        res.status(200).json({ 
-            tool: "Stop", 
-            message: "My neural link is recalibrating. Just a moment..." 
-        });
+        console.error("Groq Error:", error);
+        res.status(500).json({ error: "AI processing failed." });
     }
 });
 
-// Root route for Health Monitoring
-app.get('/', (req, res) => res.send("NPC BRAIN STATUS: OPERATIONAL"));
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Master Server live on port ${PORT}`));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Caine AI running on port ${PORT}`));
