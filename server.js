@@ -40,7 +40,6 @@ OUTPUT: Respond with EXACTLY ONE valid JSON object. No markdown, no backticks.
 {
   "mode": "talk" | "build" | "mixed",
   "message": "Short text",
-  "emotion": "happy" | "excited" | "curious" | "confused" | "thinking" | "glitching" | "calm" | "chaotic",
   "actions": [
     {
       "id": "string",
